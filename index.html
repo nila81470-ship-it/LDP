@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Deriv Last Digit & Accumulator Analyzer</title>
+<style>
+body{background:#020617;color:#e5e7eb;font-family:Arial,Helvetica,sans-serif;padding:16px}
+.card{background:#0f172a;border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);margin-bottom:16px}
+h1{margin:0 0 8px;font-size:22px}
+select,button{padding:10px;border-radius:10px;border:1px solid #334155;background:#020617;color:#e5e7eb}
+button{cursor:pointer;margin-top:8px}
+.signal{font-size:32px;font-weight:700;text-align:center;margin-top:12px}
+.up{color:#22c55e}
+.down{color:#ef4444}
+.wait{color:#facc15}
+.muted{color:#94a3b8;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Deriv Last Digit & Accumulator Analyzer</h1>
+<div class="muted">Predict last digit Rise/Fall (5 ticks) and Accumulator trend (20 ticks) with confidence.</div>
+<div>
+<label>Market</label><br/>
+<select id="symbol">
+<option value="R_100">Volatility 100</option>
+<option value="R_75">Volatility 75</option>
+<option value="R_30">Volatility 30</option>
+<option value="R_25">Volatility 25</option>
+<option value="R_10">Volatility 10</option>
+<option value="R_100s">Volatility 100 (1s)</option>
+<option value="R_75s">Volatility 75 (1s)</option>
+<option value="R_30s">Volatility 30 (1s)</option>
+<option value="R_25s">Volatility 25 (1s)</option>
+<option value="R_10s">Volatility 10 (1s)</option>
+</select>
+<br>
+<button id="start">Start</button>
+<button id="stop">Stop</button>
+</div>
+<div class="card" style="text-align:center">
+<div class="signal wait" id="lastDigitSignal">WAIT ⏳</div>
+<div id="lastDigitProb" class="muted">Collecting last digits...</div>
+</div>
+<div class="card" style="text-align:center">
+<div class="signal wait" id="accSignal">WAIT ⏳</div>
+<div id="accProb" class="muted">Collecting ticks for accumulator...</div>
+</div>
+<script>
+const APP_ID = 1089;
+let ws;
+let lastDigits = [];
+let accTicks = [];
+
+function start(){
+  stop();
+  lastDigits=[];
+  accTicks=[];
+  const symbol=document.getElementById('symbol').value;
+  ws=new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`);
+  ws.onopen=()=>{
+    ws.send(JSON.stringify({ticks:symbol,subscribe:1}));
+  };
+  ws.onmessage=(msg)=>{
+    const data=JSON.parse(msg.data);
+    if(data.tick){
+      processTick(data.tick.quote);
+    }
+  };
+}
+
+function stop(){
+  if(ws) ws.close();
+  document.getElementById('lastDigitSignal').className='signal wait';
+  document.getElementById('lastDigitSignal').innerText='WAIT ⏳';
+  document.getElementById('lastDigitProb').innerText='Collecting last digits...';
+  document.getElementById('accSignal').className='signal wait';
+  document.getElementById('accSignal').innerText='WAIT ⏳';
+  document.getElementById('accProb').innerText='Collecting ticks for accumulator...';
+}
+
+function processTick(price){
+  // Last digit analysis (5-tick rise/fall)
+  const lastDigit=price%10;
+  if(lastDigits.length>=10) lastDigits.shift();
+  lastDigits.push(lastDigit);
+  analyzeLastDigit();
+
+  // Accumulator analysis (20 ticks)
+  if(accTicks.length>=100) accTicks.shift();
+  accTicks.push(price);
+  analyzeAccumulator();
+}
+
+function analyzeLastDigit(){
+  if(lastDigits.length<2) return;
+  let rise=0,fall=0;
+  for(let i=1;i<lastDigits.length;i++){
+    if(lastDigits[i]>lastDigits[i-1]) rise++;
+    else if(lastDigits[i]<lastDigits[i-1]) fall++;
+  }
+  const total=rise+fall;
+  const riseProb=((rise/total)*100).toFixed(1);
+  const fallProb=((fall/total)*100).toFixed(1);
+  document.getElementById('lastDigitProb').innerText=`Rise: ${riseProb}% | Fall: ${fallProb}%`;
+  if(riseProb>=60) showSignal('RISE ↑','up','lastDigitSignal');
+  else if(fallProb>=60) showSignal('FALL ↓','down','lastDigitSignal');
+  else showSignal('WAIT ⏳','wait','lastDigitSignal');
+}
+
+function analyzeAccumulator(){
+  if(accTicks.length<20) return;
+  let streakDir=0; // +1 rise, -1 fall
+  let maxStreak=0,currentStreak=1;
+  for(let i=1;i<accTicks.length;i++){
+    const dir=accTicks[i]>accTicks[i-1]?1:(accTicks[i]<accTicks[i-1]?-1:0);
+    if(dir===streakDir && dir!==0) currentStreak++;
+    else { streakDir=dir; currentStreak=1; }
+    if(currentStreak>maxStreak) maxStreak=currentStreak;
+  }
+  const confidence=Math.min((maxStreak/20)*100,100).toFixed(1);
+  document.getElementById('accProb').innerText=`Longest streak: ${maxStreak} ticks | Confidence: ${confidence}%`;
+  if(confidence>=60){
+    if(streakDir===1) showSignal('ACCUMULATOR RISE →','up','accSignal');
+    else if(streakDir===-1) showSignal('ACCUMULATOR FALL →','down','accSignal');
+  } else showSignal('WAIT ⏳','wait','accSignal');
+}
+
+function showSignal(text,cls,elId){
+  const el=document.getElementById(elId);
+  el.className='signal '+cls;
+  el.innerText=text;
+}
+
+document.getElementById('start').onclick=start;
+document.getElementById('stop').onclick=stop;
+</script>
+</body>
+</html>
